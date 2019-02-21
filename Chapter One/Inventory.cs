@@ -1,544 +1,562 @@
-using UnityEngine;
-using UnityEngine.UI;
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
-using System;
-using System.Text;
+using UnityEngine;
 using System.IO;
+using System;
+using BOItem;
+namespace Game.Inventory {
 
-namespace Player{
-    public class Inventory : MonoBehaviour {
-        public GameObject player;
-        public PlayerStats p_stats;
-        public string inventoryID = "";
-        public List<Item> inventory;
-        //public int inventorySize;
-        private TextAsset ItemLibrary;
-        private TextAsset ItemLibraryPaths;
-        private StreamWriter invWriter;
-        GameObject Grid;
-        GameObject ItemButton;
-        public bool display;
-        public Transform game;
+    public interface IInventory
+    {
+        List<Item> GetInventory();
+        Item GetItem(int itemId);
+        int GetItemId(string itemName);
+        int GetItemIndex(int itemId);
+        int GetEquippedItemIndex(int itemId);
+        int GetEquippedItemIndex(EquipSlot slot);
+        int GetEquippedItemId(EquipSlot slot);
+        void RemoveItem(int itemId, int count);
+        void AddItem(int itemId, int count);
+        bool HasItemAmount(int itemId, int count);
+        int GetItemQuantity(int itemId);
+        void SwapItems(int firstItemIndex, int secondItemIndex);
+        bool EquipItem(int itemId);
+        bool UnEquipItem(int itemId);
+        ArmourEquipSerializable SerializeEquip();
+        void Save();
+
+    }
+
+    public class Inventory : IInventory
+    {
+
+        public static ItemDetailsObject[] itemDetailsLibrary;
+        public static List<Item> playerInventory = new List<Item>();
+        public static List<Item> equippedItems = new List<Item>();
+        public static bool dataLoaded = false;
+
+        public Inventory()
+        {
+            if (!Inventory.dataLoaded)
+                LoadInventoryData();
+        }
+
+        public AttributesSerializable GetArmourAttributes()
+        {
+            //Debug.Log("Getting Armour Attributes");
+            float armour = 0f;
+            float magicResist = 0f;
+            foreach (Item item in equippedItems)
+            {
+                if (item.GetItemDetails().combatData.isArmour())
+                {
+                    armour += item.GetItemDetails().combatData.statsDefensive.armour;
+                    magicResist += item.GetItemDetails().combatData.statsDefensive.magicResist;
+                }
+            }
+            return new AttributesSerializable(0, armour, magicResist, 0, 0, 0, 0, (new Level()));
+        }
+
+        //Returns a List of the Items in the player's inventory
+        public List<Item> GetInventory(){
+	    	return playerInventory;
+	    }
+
+	    //Returns an item object from the playerInventory
+	    //This function seems pointless but I can't bring myself to get rid of it yet
+	    public Item GetItem(int itemId){
+	        foreach (Item item in playerInventory){
+	            if (item.id == itemId)
+	                return item;
+	        }
+	        return new Item();
+	    }
+
+        //Returns an item object from the playerInventory
+        //This function seems pointless but I can't bring myself to get rid of it yet
+        public Item GetEquippedItem(int itemId)
+        {
+            foreach (Item item in equippedItems)
+            {
+                if (item.id == itemId)
+                    return item;
+            }
+            return new Item();
+        }
+
+        //Returns an item object from the playerInventory
+        //This function seems pointless but I can't bring myself to get rid of it yet
+        public Item GetEquippedItem(EquipSlot slot)
+        {
+            foreach (Item item in equippedItems)
+            {
+                if (item.itemDetails.combatData.equipSlot == slot)
+                    return item;
+            }
+            return new Item();
+        }
+
+        //returns the item's index in the player inventory
+        public int GetItemIndex(int itemId){
+	    	for (int x = 0; x < playerInventory.Count; ++x){
+	    		if (playerInventory[x].id == itemId)
+	    			return x;
+	    	}
+
+	    	return -1;
+	    }
+
+	    //returns the item's index in the player's equipped items
+	    public int GetEquippedItemIndex(int itemId){
+	    	for (int x = 0; x < equippedItems.Count; ++x){
+	    		if (equippedItems[x].id == itemId)
+	    			return x;
+	    	}
+
+	    	return -1;
+	    }
+
+	    public int GetEquippedItemIndex(EquipSlot slot){
+	    	for (int x = 0; x < equippedItems.Count; ++x){
+	    		if (equippedItems[x].itemDetails.combatData.equipSlot == slot)
+	    			return x;
+	    	}
+
+	    	return -1;
+	    }
+
+        public int GetEquippedItemId(EquipSlot slot)
+        {
+            for (int x = 0; x < equippedItems.Count; ++x)
+            {
+                if (equippedItems[x].itemDetails.combatData.equipSlot == slot)
+                    return equippedItems[x].id;
+            }
+
+            return -1;
+        }
+
+        //Removes an amount of an item from the inventory
+        public void RemoveItem(int itemId, int count){
+	    	int itemIndex = GetItemIndex(itemId);
+
+	    	if (itemIndex >= 0){
+	    		playerInventory[itemIndex].count = Mathf.Max(0, playerInventory[itemIndex].count - count);
+
+		    	//Remove if item count falls below 1
+		    	if (playerInventory[itemIndex].count < 1){
+		    		playerInventory.RemoveAt(itemIndex);
+
+		    		//Check if removed item is equipped
+		    		int equippedIndex = GetEquippedItemIndex(itemId);
+		    		if (equippedIndex >= 0)
+		    			equippedItems.RemoveAt(equippedIndex);
+
+		    	}
+	    	}
+	    }
+
+	    //Adds an amount of an item to the inventory
+	    public void AddItem(int itemId, int count){
+	    	int itemIndex = GetItemIndex(itemId);
+
+	    	if (itemIndex < 0)
+	    		playerInventory.Add(new Item(itemId, count));
+    		else
+    			playerInventory[itemIndex].count += count;
+	    }
+
+	    //Checks if the player has a certain amount of items in the inventory
+	    public bool HasItemAmount(int itemId, int count){
+	    	int itemIndex = GetItemIndex(itemId);
+
+	    	if (itemIndex >= 0)
+	    		return (playerInventory[itemIndex].count >= count);
+    		else
+    			return false;
+	    } 
         
-        void Awake(){
-            game = GameObject.Find("Game").transform;
-            inventory = new List<Item>();
-            player = GameObject.Find("Player");
-            p_stats = player.GetComponent<PlayerStats>();
-            ItemButton = Resources.Load("ItemButton") as GameObject;
-            Grid = transform.GetChild(0).transform.Find("InventoryGrid").gameObject;
-            ItemLibrary = Resources.Load("InventoryUI/PlayerInventory") as TextAsset;
-            ItemLibraryPaths = Resources.Load("InventoryUI/ItemLibraryPaths") as TextAsset;
-            string library = getInventory();
-            string[] lines = library.Split("\n"[0]);
+        //Returns the quantity of an item in the inventory
+	    public int GetItemQuantity(int itemId){
+	    	foreach (Item item in playerInventory)
+            {
+                if (item.id == itemId)
+                    return item.count;
+            }
+            return 0;
+	    }
 
-            inventory = new List<Item>();
-            for (int x = 0; x < lines.Length; ++x){
-                List<string> parameters = lines[x].Split(","[0]).ToList();
-                if (parameters[0] == "0"){
-                    if (parameters[1] == "1"){
-                        parameters.RemoveAt(0);
-                        parameters.RemoveAt(0);
-                        parameters.Add("" + x);
-                        OneHanded item = new OneHanded(parameters);
-                        inventory.Add(item);
+        //Returns the quantity of an item in the inventory
+	    public int GetItemId(string itemName){
+	    	foreach (ItemDetailsObject item in itemDetailsLibrary)
+            {
+                if (item.name == itemName)
+                    return item.id;
+            }
+            return -1;
+	    }
+
+	    //Swaps position of two items in player inventory
+	    public void SwapItems(int firstItemIndex, int secondItemIndex){
+	    	Item temp = playerInventory[firstItemIndex];
+	    	playerInventory[firstItemIndex] = playerInventory[secondItemIndex];
+	    	playerInventory[secondItemIndex] = temp;
+	    }
+
+        //Equips Item
+        public bool EquipItem(int itemId){
+            Debug.Log("Equip Item: " + itemId);
+	    	Item toEquip = GetItem(itemId);
+
+	    	if (toEquip.id != -1){
+                //Verify item is equippable in the first place
+                if (toEquip.itemDetails.combatData.equipSlot == EquipSlot.None)
+		    		return false;
+
+                //swap equipped items if item with same equip slot exists
+		    	for (int x = 0; x < equippedItems.Count; ++x){
+		    		if (equippedItems[x].itemDetails.combatData.equipSlot == toEquip.itemDetails.combatData.equipSlot)
+                    {
+		    			equippedItems[x] = toEquip;
+		    			return true;
+		    		}
+		    	}
+
+                //Add to equipped items
+		    	equippedItems.Add(toEquip);
+
+		    	return true;
+	    	}else{
+				Debug.Log("Item Not Found");
+				return false;
+	    	}
+	    }
+
+        //UnEquips Item
+        public bool UnEquipItem(int itemId)
+        {
+            Debug.Log("UnEquip Item: " + itemId);
+            Item toUnEquip = GetItem(itemId);
+
+            if (toUnEquip.id != -1)
+            {
+                //Verify item is equippable in the first place
+                if (toUnEquip.EquipSlot == "")
+                    return false;
+
+                //Find and remove equipped item
+                for (int x = 0; x < equippedItems.Count; ++x)
+                {
+                    if (equippedItems[x].id == toUnEquip.id)
+                    {
+                        equippedItems.RemoveAt(x);
+                        return true;
                     }
-                }else if (parameters[0] == "1"){
-                    parameters.RemoveAt(0);
-                    parameters.Add("" + x);
-                    Food item = new Food(parameters);
-                    inventory.Add(item);
-                }else if (parameters[0] == "2"){
-                    parameters.RemoveAt(0);
-                    parameters.Add("" + x);
-                    Drink item = new Drink(parameters);
-                    inventory.Add(item);
-                }else if (parameters[0] == "3"){
-                    parameters.RemoveAt(0);
-                    parameters.Add("" + x);
-                    QuestItem item = new QuestItem(parameters);
-                    inventory.Add(item);
-                }else if (parameters[0] == "4"){
-                    parameters.RemoveAt(0);
-                    parameters.Add("" + x);
-                    Ammunition item = new Ammunition(parameters);
-                    inventory.Add(item);
-                }else if (parameters[0] == "5"){
-                    parameters.RemoveAt(0);
-                    parameters.Add("" + x);
-                    Material item = new Material(parameters);
-                    inventory.Add(item);
                 }
-            }
-        }
 
-        string getItemPath(string itemName){
-            string library = getInventory();
-            string[] lines = library.Split("\n"[0]);
-            for (int x = 0; x < lines.Length; ++x){
-                List<string> parameters = lines[x].Split(","[0]).ToList();
-                if (parameters[0] == itemName){
-                    return parameters[1];
-                }
+                //Item was never equipped in the first place
+                return true;
             }
-            return "-1";
-        }
-
-        GameObject getItem(Item item){
-            string itemPath = "InventoryUI/" + getItemPath(item.getName()) + item.getName();
-            Debug.Log(itemPath);
-            GameObject obj = Resources.Load(itemPath) as GameObject;
-
-            return obj;
-        }
-        
-        void FixedUpdate(){
-            if (display){
-                //Follower cam_Script;
-                //MyController p_Controller;
-                displayInventory();
-                display = false;
-            }
-        }
-        
-        
-        
-        void displayInventory(){
-            game.SendMessage("MenusOpen");
-            foreach(Transform child in Grid.transform) {
-                    if (child.name != "Title"){
-                        Destroy(child.gameObject);
-                    }
-                }
-            for (int x = 0; x < inventory.Count; ++x){
-                if (inventory[x] is OneHanded){
-                    OneHanded item = inventory[x] as OneHanded;
-                    GameObject temp = (GameObject)Instantiate(ItemButton);
-                    temp.GetComponent<Button>().onClick.AddListener(() => selectItem(Int32.Parse(temp.name)));
-                    temp.transform.parent = Grid.transform;
-                    temp.transform.localScale = new Vector3(1f,1f,1f);
-                    temp.transform.name = "" + item.getID();
-                    temp.transform.GetChild(0).GetComponent<Text>().text = item.getDescription();
-                }else if (inventory[x] is Food){
-                    Food item = inventory[x] as Food;
-                    GameObject temp = (GameObject)Instantiate(ItemButton);
-                    temp.GetComponent<Button>().onClick.AddListener(() => selectItem(Int32.Parse(temp.name)));
-                    temp.transform.parent = Grid.transform;
-                    temp.transform.localScale = new Vector3(1f,1f,1f);
-                    temp.transform.name = "" + item.getID();
-                    temp.transform.GetChild(0).GetComponent<Text>().text = item.getDescription();
-                }else if (inventory[x] is Drink){
-                    Drink item = inventory[x] as Drink;
-                    GameObject temp = (GameObject)Instantiate(ItemButton);
-                    temp.GetComponent<Button>().onClick.AddListener(() => selectItem(Int32.Parse(temp.name)));
-                    temp.transform.parent = Grid.transform;
-                    temp.transform.localScale = new Vector3(1f,1f,1f);
-                    temp.transform.name = "" + item.getID();
-                    temp.transform.GetChild(0).GetComponent<Text>().text = item.getDescription();
-                }else if (inventory[x] is QuestItem){
-                    QuestItem item = inventory[x] as QuestItem ;
-                    GameObject temp = (GameObject)Instantiate(ItemButton);
-                    temp.GetComponent<Button>().onClick.AddListener(() => selectItem(Int32.Parse(temp.name)));
-                    temp.transform.parent = Grid.transform;
-                    temp.transform.localScale = new Vector3(1f,1f,1f);
-                    temp.transform.name = "" + item.getID();
-                    temp.transform.GetChild(0).GetComponent<Text>().text = item.getDescription();
-                }else if (inventory[x] is Ammunition){
-                    Ammunition item = inventory[x] as Ammunition ;
-                    GameObject temp = (GameObject)Instantiate(ItemButton);
-                    temp.GetComponent<Button>().onClick.AddListener(() => selectItem(Int32.Parse(temp.name)));
-                    temp.transform.parent = Grid.transform;
-                    temp.transform.localScale = new Vector3(1f,1f,1f);
-                    temp.transform.name = "" + item.getID();
-                    temp.transform.GetChild(0).GetComponent<Text>().text = item.getDescription();
-                }else if (inventory[x] is Material){
-                    Material item = inventory[x] as Material ;
-                    GameObject temp = (GameObject)Instantiate(ItemButton);
-                    temp.GetComponent<Button>().onClick.AddListener(() => selectItem(Int32.Parse(temp.name)));
-                    temp.transform.parent = Grid.transform;
-                    temp.transform.localScale = new Vector3(1f,1f,1f);
-                    temp.transform.name = "" + item.getID();
-                    temp.transform.GetChild(0).GetComponent<Text>().text = item.getDescription();
-                }
-                
-            }
-        }
-        
-        public void selectItem(int id){
-            if (inventory[id] is OneHanded){
-                OneHanded weap = inventory[id] as OneHanded;
-                Debug.Log("Weapon Selected... [" + id + "]");
-                player.GetComponent<PlayerCombatController>().EquipItem(weap);
-            }else if (inventory[id] is Food){
-                Debug.Log("Food Selected...[" + id + "]");
-                GameObject f = (GameObject)Resources.Load("Food");
-                Food invF = inventory[id] as Food;
-                f.GetComponent<ConsumeFood>().Modifier = invF.getModifier();
-                f.GetComponent<ConsumeFood>().Duration = invF.getDuration();
-                Instantiate(f);
-                inventory[id].updateCount(-1);
-            }else if (inventory[id] is Drink){
-                Debug.Log("Drink Selected...[" + id + "]");
-                inventory[id].updateCount(-1);
-            }else if (inventory[id] is Ammunition){
-                Debug.Log("Ammunition Selected...[" + inventory[id].getName() + "]");
-                inventory[id].updateCount(-1);
-            }else if (inventory[id] is Material){
-                Debug.Log("Material Selected...[" + inventory[id].getName() + "]");
-                inventory[id].updateCount(-1);
-            }
-            Debug.Log("Inventory Count:" + inventory[id].getCount());
-            if (inventory[id].getCount() > 0){
-                display = true;
-            }else{
-                RemoveItem(id);
-            }
-        }
-        
-        public void RemoveItem(int i){
-            inventory.RemoveAt(i);
-        }
-
-        public void removeAmountFromItem(string itemName, int count){
-            int itemIndex = inventory.FindIndex(x => x.getName() == itemName);
-            inventory[itemIndex].updateCount(-count);
-            if (inventory[itemIndex].getCount() <= 0){
-                RemoveItem(itemIndex);
-            }
-            saveInventory();
-        }
-
-        public bool checkItemQuantity(string name, int quantity){
-            int itemIndex = inventory.FindIndex(x => x.getName() == name);
-            Debug.Log("Item Index: " + itemIndex);
-            if (itemIndex >= 0){
-                return (inventory[itemIndex].getCount() >= quantity);
-            }else{
+            else
+            {
+                Debug.Log("Item Not Found");
                 return false;
             }
         }
 
-        public int getItemQuantity(string name){
-            int itemIndex = inventory.FindIndex(x => x.getName() == name);
-            Debug.Log("Item Index: " + itemIndex);
-            if (itemIndex >= 0){
-                return inventory[itemIndex].getCount();
-            }else{
-                return 0;
-            }
-        }
-        
-        public void updateInventory(){
-            string library = getInventory();
-            string[] lines = library.Split("\n"[0]);
-            Debug.Log("Lines Length: " + lines.Length);
-            inventory = new List<Item>();
-            for (int x = 0; x < lines.Length; ++x){
-                List<string> parameters = lines[x].Split(","[0]).ToList();
-                if (parameters[0] == "0"){
-                    if (parameters[1] == "1"){
-                        parameters.Add("" + x);
-                        parameters.RemoveAt(0);
-                               parameters.RemoveAt(0);
-                        OneHanded item = new OneHanded(parameters);
-                        inventory.Add(item);
-                    }
-                }else if (parameters[0] == "1"){
-                    parameters.RemoveAt(0);
-                    parameters.Add("" + x);
-                    Food item = new Food(parameters);
-                    inventory.Add(item);
-                }else if (parameters[0] == "2"){
-                    parameters.RemoveAt(0);
-                    parameters.Add("" + x);
-                    Drink item = new Drink(parameters);
-                    inventory.Add(item);
-                }else if (parameters[0] == "3"){
-                    parameters.RemoveAt(0);
-                    parameters.Add("" + x);
-                    QuestItem item = new QuestItem(parameters);
-                    inventory.Add(item);
-                }else if (parameters[0] == "4"){
-                    parameters.RemoveAt(0);
-                    parameters.Add("" + x);
-                    Ammunition item = new Ammunition(parameters);
-                    inventory.Add(item);
-                }else if (parameters[0] == "5"){
-                    parameters.RemoveAt(0);
-                    parameters.Add("" + x);
-                    Material item = new Material(parameters);
-                    inventory.Add(item);
-                }
-            }
-        }
-        
-        public void itemRemoved(int i){
-            for (int x = i; x < inventory.Count; ++x){
-                if (inventory[x] is OneHanded){
-                    OneHanded item = inventory[x] as OneHanded;
-                    item.setID(item.getID() - 1);
-                    Debug.Log("Item: " + item.getName() + ", " + item.getID());
-                }
-                if (inventory[x] is Food){
-                    Food item = inventory[x] as Food;
-                    item.setID(item.getID() - 1);
-                    Debug.Log("Item: " + item.getName() + ", " + item.getID());
-                }
-                if (inventory[x] is Drink){
-                    Drink item = inventory[x] as Drink;
-                    item.setID(item.getID() - 1);
-                    Debug.Log("Item: " + item.getName() + ", " + item.getID());
-                }
-                if (inventory[x] is Ammunition){
-                    Ammunition item = inventory[x] as Ammunition;
-                    item.setID(item.getID() - 1);
-                    Debug.Log("Item: " + item.getName() + ", " + item.getID());
-                }
-                if (inventory[x] is Material){
-                    Material item = inventory[x] as Material;
-                    item.setID(item.getID() - 1);
-                    Debug.Log("Item: " + item.getName() + ", " + item.getID());
-                }
-                
-            }
-        }
+        public bool LoadAmmunition(int itemId = -1){
+	    	//a specific ammunition was requested to be equipped
+	    	if (itemId >= 0){
+	    		int index = GetItemIndex(itemId);
+	    		if (index >= 0){
+	    			if (playerInventory[index].itemDetails.combatData.equipSlot == EquipSlot.Ammunition){
+	    				EquipItem(itemId);
+	    				return true;
+	    			}else
+	    				return false;
+	    		}else
+    				return false;
+	    	}else{
+	    		//Load first item in player inventory that is ammunition
+	    		foreach(Item item in playerInventory){
+	    			if (item.itemDetails.combatData.equipSlot == EquipSlot.Ammunition){
+	    				LoadAmmunition(item.id);
+	    			}
+	    		}
+	    		return false;
+	    	}
+	    }
 
-        public List<string> getItemParametersByID(int itemID){
-            Debug.Log("Item ID: " + itemID);
-            TextAsset itemLibrary = Resources.Load("InventoryUI/ItemLibrary") as TextAsset;
-            string library = itemLibrary.text;
-            string[] lines = library.Split("\n"[0]);
+	    //Subtracts x amount from item count based on itemId
+	    //Drops if item count falls to or below 0
+	    /*public void DropAmountFromItem(int itemId, int amount){
+	    	Item item = GetItem(itemId);
+	    	if (item.id != -1){
+		    	int index = GetItemIndex(itemId);
+		    	int itemCount = item.count;
+		    	int newItemCount = itemCount - amount;
 
-            List<string> param = new List<string>(lines[itemID].Split(","[0]).ToList());
+		    	if (newItemCount <= 0)
+		    		playerInventory.RemoveAt(index);
+	    		else
+	    			playerInventory[index].count = newItemCount;
+			}else
+				Debug.Log("Item Not Found");
+	    }
 
-            return param;
+	    //Adds x amount to item count based on itemId
+	    public void AddAmountToItem(int itemId, int amount){
+	    	Item item = GetItem(itemId);
+	    	if (item.id != -1){
+	    		int index = GetItemIndex(itemId);
+		    	int itemCount = item.count;
+		    	int newItemCount = itemCount + amount;
+
+				playerInventory[index].count = newItemCount;
+	    	}else
+				Debug.Log("Item Not Found");
+	    }*/
+
+	    //Saves the inventory
+	    public void Save(){
+	        Debug.Log("Saving Inventory...");
+
+	        string inv_json = JsonHelper.ToJson<BaseItem>(playerInventory.ToArray());
+	        writeInventoryToFile(inv_json);
+
+        	string eqp_json = JsonHelper.ToJson<BaseItem>(equippedItems.ToArray());
+	        writeEquippablesToFile(eqp_json);
+	    }
+
+	    //Prints the Inventory
+	    public void PrintInventory(){
+	    	foreach (Item i in playerInventory){
+	            Debug.Log("Item: " + i.ToString());
+	        }  
+	    }
+
+	    //Prints the Inventory
+	    public void PrintEquipped(){
+	    	foreach (Item i in equippedItems){
+	            Debug.Log("Equipped: " + i.ToString());
+	        }  
+	    }
+
+        public ArmourEquipSerializable SerializeEquip()
+        {
+            ArmourEquipSerializable armourEquip = new ArmourEquipSerializable();
+            armourEquip.primary = GetEquippedItemId(EquipSlot.Primary);
+            armourEquip.secondary = GetEquippedItemId(EquipSlot.Secondary);
+            armourEquip.ammunition = GetEquippedItemId(EquipSlot.Ammunition);
+            armourEquip.chest = GetEquippedItemId(EquipSlot.Chest);
+            armourEquip.helmet = GetEquippedItemId(EquipSlot.Helmet);
+            armourEquip.legs = GetEquippedItemId(EquipSlot.Legs);
+            armourEquip.boots = GetEquippedItemId(EquipSlot.Boots);
+            return armourEquip;
         }
 
-        public void addItemByID(int itemID, int count){
-            List<string> parameters = new List<string>(getItemParametersByID(itemID));
-            Debug.Log("Parameters: " + string.Join(",", parameters.ToArray()));
-            if (parameters[0] == "0"){
-                if (parameters[1] == "1"){
-                    parameters.RemoveAt(0);
-                    parameters.RemoveAt(0);
-                    parameters.Add("0");
-                    OneHanded item = new OneHanded(parameters);
-                    int index = inventory.FindIndex(x => x.getName() == item.getName());
-                    if (index >= 0) 
-                    {
-                       inventory[index].updateCount(count); // element exists, do what you need
-                    }else{
-                        item.updateCount(count - 1);
-                        inventory.Add(item);
-                    }
-                    
-                }
-            }else if (parameters[0] == "1"){
-                parameters.RemoveAt(0);
-                parameters.Add("1");
-                Food item = new Food(parameters);
 
-                int index = inventory.FindIndex(x => x.getName() == item.getName());
-                if (index >= 0) 
-                {
-                   inventory[index].updateCount(count); // element exists, do what you need
-                }else{
-                    item.updateCount(count - 1);
-                    inventory.Add(item);
-                }
-            }else if (parameters[0] == "2"){
-                parameters.RemoveAt(0);
-                parameters.Add("2");
-                Drink item = new Drink(parameters);
-                int index = inventory.FindIndex(x => x.getName() == item.getName());
-                if (index >= 0) 
-                {
-                   inventory[index].updateCount(count); // element exists, do what you need
-                }else{
-                    item.updateCount(count - 1);
-                    inventory.Add(item);
-                }
-            }else if (parameters[0] == "3"){
-                parameters.RemoveAt(0);
-                parameters.Add("3");
-                QuestItem item = new QuestItem(parameters);
-                int index = inventory.FindIndex(x => x.getName() == item.getName());
-                if (index >= 0) 
-                {
-                   inventory[index].updateCount(count); // element exists, do what you need
-                }else{
-                    item.updateCount(count - 1);
-                    inventory.Add(item);
-                }
-            }else if (parameters[0] == "4"){
-                parameters.RemoveAt(0);
-                parameters.Add("4");
-                Ammunition item = new Ammunition(parameters);
-                int index = inventory.FindIndex(x => x.getName() == item.getName());
-                if (index >= 0) 
-                {
-                   inventory[index].updateCount(count); // element exists, do what you need
-                }else{
-                    item.updateCount(count - 1);
-                    inventory.Add(item);
-                }
-            }else if (parameters[0] == "5"){
-                parameters.RemoveAt(0);
-                parameters.Add("5");
-                Material item = new Material(parameters);
-                int index = inventory.FindIndex(x => x.getName() == item.getName());
-                if (index >= 0) 
-                {
-                   inventory[index].updateCount(count); // element exists, do what you need
-                }else{
-                    item.updateCount(count - 1);
-                    inventory.Add(item);
-                }
-            }else{
-                Debug.Log("Invalid Item");
-            }
-            
-            saveInventory();
 
-        }
+        /*
+			---------------------------------------------------------------------------------------------------------
+	    	Test Functions
+			---------------------------------------------------------------------------------------------------------
+		*/
 
-        public void AddItem(List<string> i){
-            List<string> parameters = new List<string>(i);
-            Debug.Log("Parameters: " + string.Join(",", parameters.ToArray()));
-            if (parameters[0] == "0"){
-                if (parameters[1] == "1"){
-                    
-                    parameters.Add("" + inventory.Count);
-                    parameters.RemoveAt(0);
-                    parameters.RemoveAt(0);
-                    
-                    
-                    OneHanded item = new OneHanded(parameters);
+            public bool FireWeapon(){
+				int ammoIndex = GetEquippedItemIndex(EquipSlot.Ammunition);
 
-                    int index = inventory.FindIndex(x => x.getName() == item.getName());
+				if (ammoIndex < 0)
+					if (LoadAmmunition())
+						ammoIndex = GetEquippedItemIndex(EquipSlot.Ammunition);
+					else{
+						return false;
+						Debug.Log("Out of Ammunition!");
+					}
 
-                    if (index >= 0) 
-                    {
-                       inventory[index].updateCount(1); // element exists, do what you need
-                    }else{
-                        inventory.Add(item);
-                    }
-                    
-                }
-            }else if (parameters[0] == "1"){
-                parameters.RemoveAt(0);
-                parameters.Add("1");
-                Food item = new Food(parameters);
-                int index = inventory.FindIndex(x => x.getName() == item.getName());
-                if (index >= 0) 
-                {
-                   inventory[index].updateCount(1); // element exists, do what you need
-                }else{
-                    inventory.Add(item);
-                }
-            }else if (parameters[0] == "2"){
-                parameters.RemoveAt(0);
-                parameters.Add("2");
-                Drink item = new Drink(parameters);
-                int index = inventory.FindIndex(x => x.getName() == item.getName());
-                if (index >= 0) 
-                {
-                   inventory[index].updateCount(1); // element exists, do what you need
-                }else{
-                    inventory.Add(item);
-                }
-            }else if (parameters[0] == "3"){
-                parameters.RemoveAt(0);
-                parameters.Add("3");
-                QuestItem item = new QuestItem(parameters);
-                int index = inventory.FindIndex(x => x.getName() == item.getName());
-                if (index >= 0) 
-                {
-                   inventory[index].updateCount(1); // element exists, do what you need
-                }else{
-                    inventory.Add(item);
-                }
-            }else if (parameters[0] == "4"){
-                parameters.RemoveAt(0);
-                parameters.Add("4");
-                Ammunition item = new Ammunition(parameters);
-                int index = inventory.FindIndex(x => x.getName() == item.getName());
-                if (index >= 0) 
-                {
-                   inventory[index].updateCount(1); // element exists, do what you need
-                }else{
-                    inventory.Add(item);
-                }
-            }else if (parameters[0] == "5"){
-                parameters.RemoveAt(0);
-                parameters.Add("5");
-                Material item = new Material(parameters);
-                int index = inventory.FindIndex(x => x.getName() == item.getName());
-                if (index >= 0) 
-                {
-                   inventory[index].updateCount(1); // element exists, do what you need
-                }else{
-                    inventory.Add(item);
-                }
-            }else{
-                Debug.Log("Invalid Item");
-            }
-            
-            saveInventory();
-        }
+				Debug.Log("Ammo Index: " + ammoIndex);
+				if (HasItemAmount(equippedItems[ammoIndex].id, 1)){
+					Debug.Log("Fire!: " + (GetItem(equippedItems[ammoIndex].id).count - 1));
+					RemoveItem(equippedItems[ammoIndex].id, 1);
+					return true;
+				}else{
+					return false;
+				}
 
-        public void saveInventory(){
-            Debug.Log("Saving Inventory...");
-            List<Item> newInv = new List<Item>(inventory);
-            Item[] lines = newInv.ToArray();
-            string[] pInvFile = new string[lines.Length];
-            string fileLines = "";
-            for (int x = 0; x < lines.Length; ++x){
-                pInvFile[x] = lines[x].toInv();
-                if (x > 0){
-                   fileLines += "\r\n"; 
-                }
-                fileLines += lines[x].toInv();
-            }
 
-            for (int x = 0; x < pInvFile.Length; ++x){
-                Debug.Log(pInvFile[x]);
-            }            
 
-            writeToFile(fileLines);
 
-            Debug.Log("Inventory Saved...");
-        }
-        
-        void writeToFile(string lines){
 
-            string fileName = "PlayerInventory.txt";
+			}
 
-            if (File.Exists(fileName))
+
+	    /*
+			---------------------------------------------------------------------------------------------------------
+	    	Don't need to look below this unless you want to understand how I implented the rest of the functionality
+			---------------------------------------------------------------------------------------------------------
+		*/
+
+
+
+
+
+
+	    //Likely don't need to use (DO NOT DELETE THOUGH).
+	    //This method is called fom the Item class to load the item's details
+	    public ItemDetailsObject GetItemDetails(int itemId){
+	        foreach (ItemDetailsObject item in itemDetailsLibrary){
+	            if (item.id == itemId)
+	                return item;
+	        }
+	        return new ItemDetailsObject();
+	    }
+
+	    //Function that calls: GetItemDetailsLibrary and GetPlayerInventory()
+	    private void LoadInventoryData(){
+            dataLoaded = true;
+	        itemDetailsLibrary = GetItemDetailsLibrary();
+	        playerInventory = GetPlayerInventory();
+	        equippedItems = GetPlayerEquipped();
+	    }
+
+	    private ItemDetailsObject[] GetItemDetailsLibrary(){
+	        StreamReader reader = new StreamReader(@"GameData\itemData.txt"); 
+	        string json = reader.ReadToEnd();
+	        reader.Close();
+	        return JsonHelper.FromJson<ItemDetailsObject>(json);        
+	    }
+
+	    private List<Item> GetPlayerInventory(){
+	        StreamReader reader = new StreamReader(@"GameData\playerInventory.txt"); 
+            ItemFactory factory = new ItemFactory();
+	        string json = reader.ReadToEnd();
+        	reader.Close();
+	        BaseItem[] baseItems = JsonHelper.FromJson<BaseItem>(json); 
+	        List<Item> newInventory = new List<Item>();
+
+	        for (int x = 0; x < baseItems.Length; ++x){
+	           // Item i = new Item(baseItems[x].id, baseItems[x].count);
+	            Item i = factory.CreateItem(baseItems[x].id, baseItems[x].count);
+	            newInventory.Add(i);
+	        }        
+	        
+	        return newInventory;
+	    }
+
+	    private List<Item> GetPlayerEquipped(){
+	        StreamReader reader = new StreamReader(@"GameData\playerEquipped.txt"); 
+	        string json = reader.ReadToEnd();
+        	reader.Close();
+            BaseItem[] baseItems = new BaseItem[] { };
+            try
             {
-                Debug.Log(fileName+" already exists.");
-
-                // Write the string to a file.
-                System.IO.StreamWriter file = new System.IO.StreamWriter(fileName);
-                file.WriteLine(lines);
-
-                file.Close();
-
-                return;
-            }else{
-                Debug.Log("Creating File: " + fileName);
-                var sr = File.CreateText(fileName);
-                sr.Close();
+                baseItems = JsonHelper.FromJson<BaseItem>(json);
+            }catch
+            {
+                Debug.LogError("Failed to Load Base Item Json...");
             }
-            
-        }
+	        List<Item> newInventory = new List<Item>();
 
-        string getInventory(){
-            StreamReader reader = new StreamReader(inventoryID + ".txt"); 
-            return reader.ReadToEnd();
-        }
-        
+	        for (int x = 0; x < baseItems.Length; ++x){
+	            Item i = new Item(baseItems[x].id, baseItems[x].count);
+	            newInventory.Add(i);
+	        }        
+	        
+	        return newInventory;
+	    }
+	        
+	    private void writeInventoryToFile(string lines){
+
+	        string fileName = @"GameData\playerInventory.txt";
+
+	        if (File.Exists(fileName))
+	        {
+	            Debug.Log(fileName+" already exists.");
+
+	            // Write the string to a file.
+	            System.IO.StreamWriter file = new System.IO.StreamWriter(fileName);
+	            file.WriteLine(lines);
+
+	            file.Close();
+
+	            return;
+	        }else{
+
+	            Debug.Log("Creating File: " + fileName);
+
+	            var vr = File.CreateText(fileName);
+	            vr.Close();
+
+	            System.IO.StreamWriter file = new System.IO.StreamWriter(fileName);
+	            List<BaseItem> newList = new List<BaseItem>();
+	            //GameSaveSerializable g_save = new GameSaveSerializable();
+	            file.WriteLine(JsonHelper.ToJson<BaseItem>(newList.ToArray()));
+
+	            file.Close();
+	        }
+	        
+	    }
+
+	    private void writeEquippablesToFile(string lines){
+
+	        string fileName = @"GameData\playerEquipped.txt";
+
+	        if (File.Exists(fileName))
+	        {
+	            Debug.Log(fileName+" already exists.");
+
+	            // Write the string to a file.
+	            System.IO.StreamWriter file = new System.IO.StreamWriter(fileName);
+	            file.WriteLine(lines);
+
+	            file.Close();
+
+	            return;
+	        }else{
+
+	            Debug.Log("Creating File: " + fileName);
+
+	            var vr = File.CreateText(fileName);
+	            vr.Close();
+
+	            System.IO.StreamWriter file = new System.IO.StreamWriter(fileName);
+	            //List<BaseItem> newList = new List<BaseItem>();
+	            //GameSaveSerializable g_save = new GameSaveSerializable();
+	            file.WriteLine(lines);
+
+	            file.Close();
+	        }
+	        
+	    }
+	}
+}
+
+//Unity's Json Utility does not support Json Arrays so I found this custom Wrapper class to handle Serialization
+public static class JsonHelper
+{
+    public static T[] FromJson<T>(string json)
+    {
+        Wrapper<T> wrapper = JsonUtility.FromJson<Wrapper<T>>(json);
+        return wrapper.Items;
+    }
+
+    public static string ToJson<T>(T[] array)
+    {
+        Wrapper<T> wrapper = new Wrapper<T>();
+        wrapper.Items = array;
+        return JsonUtility.ToJson(wrapper);
+    }
+
+    public static string ToJson<T>(T[] array, bool prettyPrint)
+    {
+        Wrapper<T> wrapper = new Wrapper<T>();
+        wrapper.Items = array;
+        return JsonUtility.ToJson(wrapper, prettyPrint);
+    }
+
+    [Serializable]
+    private class Wrapper<T>
+    {
+        public T[] Items;
     }
 }
